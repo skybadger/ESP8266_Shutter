@@ -23,5 +23,8 @@ typedef struct { //Using bit-packing - I hope - test:compiles at least.
 //Copied from ASCOM standards - beware of repeat definition.
 enum shutterState  { SHUTTER_OPEN=0, SHUTTER_CLOSED, SHUTTER_OPENING, SHUTTER_CLOSING, SHUTTER_ERROR, SHUTTER_IDLE }; //ASCOM defined constants.
 
+static const char* shutterStatusChArr[6] = { "SHUTTER_OPEN", "SHUTTER_CLOSED", "SHUTTER_OPENING", "SHUTTER_CLOSING", "SHUTTER_ERROR", "SHUTTER_IDLE" }; 
+
+
 //
 #endif

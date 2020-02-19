@@ -15,7 +15,8 @@ fix all .begin errors to represent their status as to whether present on the bus
  All 3.3v logic. 
   
 */
-#iinclude "SkybadgerDebug.h"
+#include "ProjectDefs.h"
+#include "DebugSerial.h"
 #include <esp8266_peri.h> //register map and access
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
@@ -34,16 +35,9 @@ fix all .begin errors to represent their status as to whether present on the bus
 #include <time.h>
 #include <sys/time.h>
 #include <coredecls.h>
-#define TZ              0       // (utc+) TZ in hours
-#define DST_MN          60      // use 60mn for summer time in some countries
-#define TZ_MN           ((TZ)*60)
-#define TZ_SEC          ((TZ)*3600)
-#define DST_SEC         ((DST_MN)*60)
 time_t now; //use as 'gmtime(&now);'
 
 ESP8266WiFiMulti wifiMulti; //Allows the use of multiple SSID wireless APs during development.
-IPAddress timeServer(193,238,191,249); // pool.ntp.org NTP server
-unsigned long NTPseconds; //since 1970
 
 //Strings
 #include <SkybadgerStrings.h>
@@ -52,8 +46,11 @@ char* thisID         = "espDSH01";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-long lastMsg = 0;
-char msg[50];
+bool callbackFlag = false;
+
+//Detect changes of shutter states on pins
+int event = 0;
+int lastShutterState = 0;
 
 // Create an instance of the server
 // specify the port to listen on as an argument
@@ -65,6 +62,7 @@ EspClass device;
 ETSTimer timer, timeoutTimer;
 volatile bool newDataFlag = false;
 volatile bool timeoutFlag = false;
+bool timerSet = false;
 
 void onTimer(void);
 String& getTimeAsString(String& );
@@ -173,6 +171,7 @@ void setup()
   //Setup timers
   //setup interrupt-based 'soft' alarm handler for periodic acquisition of new bearing
   ets_timer_setfn( &timer, onTimer, NULL ); 
+  //For MQTT Async non blocking reconnect
   ets_timer_setfn( &timeoutTimer, onTimeoutTimer, NULL ); 
   
   //fire timer every 500 msec
@@ -194,8 +193,10 @@ void onTimer( void * pArg )
 void onTimeoutTimer( void* pArg )
 {
   //Read command list and apply.
-  //Currently only thing done is reset latch relay to off.
-  shutter.write( PIN_LOCK, domeHW.latchRelay = 0);
+  if ( !timerSet ) 
+  {//Then its not being used by MQTT. it must be this.
+     shutter.write( PIN_LOCK, domeHW.latchRelay = 0);
+  }
 
   //reset flag  
   timeoutFlag = true;
@@ -223,6 +224,9 @@ void loop()
       //Adopt the view that the shutter at stopped at target position is actually SHUTTER_OPEN, even if openSensor isn't triggered
       //Update the sensors
       int in = shutter.read8() & 0b00111110;
+      event = lastShutterState ^ in;
+      lastShutterState = in;
+      
       domeHW.led          = ( in & 0b01);
       domeHW.closedSensor = ((in & 0b010)     >> 1);
       domeHW.openSensor   = ((in & 0b0100)    >> 2);
@@ -249,9 +253,12 @@ void loop()
   {
     if ( callbackFlag )
     {
-      publishDomeState();
+
       ;;//STUFF
     }
+    if( event > 0 ) 
+       publishShutterEvent( event );
+
     client.loop();
   }
   else 
@@ -259,8 +266,6 @@ void loop()
     reconnectNB();
     client.subscribe(inTopic);
   }     
- 
- 
 }
  
 /* MQTT callback for subscription and topic.
@@ -276,7 +281,7 @@ void callback(char* topic, byte* payload, unsigned int length)
 This function will publish events to the functional queue
 Subscribers will receive this an know there is change of state
 */
-void publishDomeEvent( int event )
+void publishShutterEvent( int event )
 {
   String output;
   String outTopic;
@@ -304,7 +309,7 @@ void publishDomeEvent( int event )
    case 0x20:
    case 0x40:
    case 0x80:
-   case default:
+   default:
       break;
   }
   root["time"] = timestamp;
@@ -344,4 +349,3 @@ void publishHealth(void )
   else
     Serial.printf( "Publish failed! topic: %s: message: %s \n", outTopic.c_str(), output.c_str() ); 
 }
-

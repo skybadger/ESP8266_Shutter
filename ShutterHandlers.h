@@ -1,6 +1,8 @@
 #if ! defined _DOMESHUTTER_HANDLERS_H_
 #define _DOMESHUTTER_HANDLERS_H_
 
+#include "ProjectDefs.h"
+
 //handler definitions
 void handleShutterStatusGet( void );
 void handleShutterStatusPut( void );
@@ -106,7 +108,6 @@ void handleRoot( void );
   void handleShutterStatusGet()
   {
     //enum shutterState  { SHUTTER_OPEN, SHUTTER_CLOSED, SHUTTER_OPENING, SHUTTER_CLOSING, SHUTTER_ERROR, SHUTTER_IDLE }; //ASCOM defined constants.
-    static const char* shutterStatusChArr[6] = { "SHUTTER_OPEN", "SHUTTER_CLOSED", "SHUTTER_OPENING", "SHUTTER_CLOSING", "SHUTTER_ERROR", "SHUTTER_IDLE" }; 
     String timeString = "", message = "";
     DynamicJsonBuffer jsonBuffer(256);
     JsonObject& root = jsonBuffer.createObject();
@@ -192,13 +193,12 @@ void handleRoot( void );
       int targetPosition = server.arg("altitude").toInt();
       if( domeHW.openSensor ^ domeHW.closedSensor ) //then we know its parked at top or bottom 
       {
-        ;;//To do  - when it can be measured
+        ;;//To do  - when it can be measured - inclinometer ?
       }
     }
   }
   
   //Return sensor status
-#define MAX_STRING_LENGTH 25
   void handleRoot()
   {
     String timeString = "", message = "";
@@ -207,9 +207,18 @@ void handleRoot( void );
     DynamicJsonBuffer jsonBuffer(256);
     JsonObject& root = jsonBuffer.createObject();
 
-    sprintf( temp, "0b%b", domeHW );
-    root["time"] = getTimeAsString( timeString );
-    root["status"] = temp;
+    root["time"]            = getTimeAsString( timeString );
+    root["service"]         = F("ASCOM Dome shutter controller");
+    root["status string"]   = shutterStatusChArr[ (int) shutterStatus ];
+    root["status"]          = (int) shutterStatus;
+    root["position"]        = altitude;
+    root["latchRelay"]      = (domeHW.latchRelay == 1)? "unlocked":"locked";
+    root["led"]             = domeHW.led;
+    root["closed sensor"]   = domeHW.closedSensor;
+    root["open sensor"]     = domeHW.openSensor;
+    root["motor enabled"]   = domeHW.motorEn;
+    root["motor direction"] = domeHW.motorDirn;
+    
     root.printTo(message);
     server.send(200, "application/json", message);
   }
