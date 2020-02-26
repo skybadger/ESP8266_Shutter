@@ -23,13 +23,12 @@ fix all .begin errors to represent their status as to whether present on the bus
 #include <PubSubClient.h> //https://pubsubclient.knolleary.net/api.html
 #include <EEPROM.h>
 #include <EEPROMAnything.h>
-
 #include <Wire.h>         //https://playground.arduino.cc/Main/WireLibraryDetailedReference
 #include <Time.h>         //Look at https://github.com/PaulStoffregen/Time for a more useful internal timebase library
-
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPUpdateServer.h>
 #include <ArduinoJson.h>
+#include <GDBStub.h> //Debugging stub for GDB
 
 //Ntp dependencies - available from v2.4
 #include <time.h>
@@ -63,9 +62,8 @@ ETSTimer timer, timeoutTimer;
 volatile bool newDataFlag = false;
 volatile bool timeoutFlag = false;
 bool timerSet = false;
-
 void onTimer(void);
-String& getTimeAsString(String& );
+void onTimeoutTimer(void);
 
 //Dome shutter control via I2C Port Expander PCF8574
 #include "DomeShutter.h"
@@ -99,7 +97,7 @@ void setup_wifi()
     }    
   }
 
-
+  Serial.println("WiFi connected");
   Serial.printf("SSID: %s, Signal strength %i dBm \n\r", WiFi.SSID().c_str(), WiFi.RSSI() );
   Serial.printf("Hostname: %s\n\r",       WiFi.hostname().c_str() );
   Serial.printf("IP address: %s\n\r",     WiFi.localIP().toString().c_str() );
@@ -107,7 +105,6 @@ void setup_wifi()
   Serial.printf("DNS address 1: %s\n\r",  WiFi.dnsIP(1).toString().c_str() );
   delay(5000);
 
-  //Setup sleep parameters
   //Setup sleep parameters
   //wifi_set_sleep_type(LIGHT_SLEEP_T);
 
@@ -157,6 +154,7 @@ void setup()
   //Create a callback that causes this device to read the local status for data to publish.
   client.setCallback( callback );
   client.subscribe( inTopic );
+  Serial.println("MQTT subscription initialised");
   
   //Setup webserver handler functions
   httpUpdater.setup( &server );
@@ -171,6 +169,7 @@ void setup()
   //Setup timers
   //setup interrupt-based 'soft' alarm handler for periodic acquisition of new bearing
   ets_timer_setfn( &timer, onTimer, NULL ); 
+  
   //For MQTT Async non blocking reconnect
   ets_timer_setfn( &timeoutTimer, onTimeoutTimer, NULL ); 
   
@@ -209,12 +208,13 @@ void loop()
   String output;
   static int loopCount = 0;
   
-  DynamicJsonBuffer jsonBuffer(256);
-  JsonObject& root = jsonBuffer.createObject();
+  if( WiFi.status() != WL_CONNECTED)
+  {
+      device.restart();
+  }
 
   if( newDataFlag == true ) 
   {
-    root["time"] = getTimeAsString2( timestamp );
     //toggle LED
     shutter.write( PIN_LED, domeHW.led = (domeHW.led == 1 )? 0 : 1 );
 
@@ -253,11 +253,12 @@ void loop()
   {
     if ( callbackFlag )
     {
-
+      publishHealth();
       ;;//STUFF
+      callbackFlag = false;
     }
-    if( event > 0 ) 
-       publishShutterEvent( event );
+    //if( event > 0 ) 
+    //   publishShutterEvent( event );
 
     client.loop();
   }
@@ -274,7 +275,6 @@ void loop()
 void callback(char* topic, byte* payload, unsigned int length) 
 {
    callbackFlag = true;
-   
 }
 
 /*
@@ -314,9 +314,10 @@ void publishShutterEvent( int event )
   }
   root["time"] = timestamp;
   root["device"] = "Shutter";
+  root["event"] = event;
   
   root.printTo(output);
-  outTopic = outHealthTopic;
+  outTopic = outFnTopic;
   outTopic.concat( myHostname );
   
   if ( client.publish( outTopic.c_str(), output.c_str(), true ) )
@@ -325,7 +326,6 @@ void publishShutterEvent( int event )
     Serial.printf( "Publish failed! topic: %s: message: %s \n", outTopic.c_str(), output.c_str() ); 
 }
 
-
 void publishHealth(void )
 {
   String output;
@@ -333,14 +333,14 @@ void publishHealth(void )
   String timestamp = "";
    
   //checkTime();
-  getTimeAsString( timestamp );
+  getTimeAsString2( timestamp );
 
   //publish to our device topic(s)
   DynamicJsonBuffer jsonBuffer(256);
   JsonObject& root = jsonBuffer.createObject();
 
   root["time"] = timestamp;
-  output = "Status published";
+  output = "Listening";
   outTopic = outHealthTopic;
   outTopic.concat( myHostname );
   
